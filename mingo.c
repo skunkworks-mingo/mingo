@@ -31,7 +31,7 @@ int checkDatabase(sqlite3* db, char* database) {
 
     // Look through all the databases for specified database
     while ((rc = sqlite3_step(findStmt)) == SQLITE_ROW) {
-        if (strcmp(sqlite3_column_text(findStmt, 1), database) == 0) {
+        if (strcmp((const char*)sqlite3_column_text(findStmt, 1), database) == 0) {
             foundDatabase = 1;
         }
     }
@@ -148,7 +148,7 @@ int dropTables(sqlite3* db, char* database) {
     // Put all tables in the database into the "tables" array
     i = 0;
     while (sqlite3_step(findTablesStmt) == SQLITE_ROW) {
-        char* res = sqlite3_column_text(findTablesStmt, 0);
+        char* res = (char*)sqlite3_column_text(findTablesStmt, 0);
         tables[i] = malloc(strlen(res) + 1);
         strcpy(tables[i], res);
         i++;
@@ -229,16 +229,17 @@ void mongoc_database_drop(char* database) {
 
 void mongoc_collection_insert(char* database, char* collection, char* document) {
     // generate ID - TODO: do it better
-    // TODO: Convert JSON string to BSON document 
-    //bson_t* data;
-    //bson_init_from_json(data, document, strlen(document), NULL);
-    // Insert the ID and the blob into the database 
 
-    //Prepare statement 
+    bson_t* data = bson_new_from_json((uint8_t*)document, strlen(document) + 1, NULL);
+
+    // Insert the ID and the blob into the database
+
+    // Prepare statement
     char* s1 = "INSERT INTO ";
     char* s2 = ".";
     char* s3 = " VALUES (?, ?)";
-    char* sql = malloc(strlen(s1) + +strlen(database) + strlen(s2) + strlen(collection) + strlen(s3));
+    char* sql =
+        malloc(strlen(s1) + strlen(database) + strlen(s2) + strlen(collection) + strlen(s3));
     strcpy(sql, s1);
     strcat(sql, database);
     strcat(sql, s2);
@@ -249,110 +250,153 @@ void mongoc_collection_insert(char* database, char* collection, char* document) 
     int rc;
 
     rc = sqlite3_prepare_v2(db, sql, -1, &insertStmt, NULL);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Cannot prepare insert statement: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        free(sql);
+        return;
+    }
     sqlite3_bind_int(insertStmt, 1, id);
-    sqlite3_bind_blob(insertStmt, 2, document, -1, 0);
+    sqlite3_bind_text(insertStmt, 2, bson_get_data(data), data->len, SQLITE_STATIC);
 
     rc = sqlite3_step(insertStmt);
 
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "Cannot insert: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        free(sql);
+        return;
+    }
+
+    size_t len;
     id++;
-    
 }
 
-int mongoc_collection_count(char* database, char* collection, char* id) {
-    // TODO change from just looking for id to looking for field/indexing
+/*
+ * Returns 1 if the document contains the field/value pair, 0 otherwise
+ */
+int match(const uint8_t* document, char* fieldName, bson_value_t* fieldValue, int documentLength) {
+    bson_error_t error;
+    size_t len;
 
-    char* s1 = "SELECT count(*) FROM ";
+    bson_t* b;
+    bson_iter_t iter;
+
+    if ((b = bson_new_from_data(document, documentLength))) {
+        if (bson_iter_init(&iter, b)) {
+            while (bson_iter_next(&iter)) {
+                if (strcmp((char*)bson_iter_key(&iter), fieldName) == 0) {
+                    bson_t new_doc1;
+                    bson_init(&new_doc1);
+                    bson_append_value(&new_doc1, "_id", -1, fieldValue);
+
+                    bson_t new_doc2;
+                    bson_init(&new_doc2);
+                    bson_append_value(&new_doc2, "_id", -1, bson_iter_value(&iter));
+
+                    bool are_equal = bson_equal(&new_doc1, &new_doc2);
+
+                    return are_equal;
+                }
+            }
+        }
+    }
+
+    return 0;
+}
+
+
+int mongoc_collection_count(char* database, char* collection, char* fieldName, char* fieldValue) {
+    bson_value_t* field = bson_malloc(sizeof(bson_value_t));
+    field->value_type = BSON_TYPE_UTF8;
+    field->value.v_utf8.str = fieldValue;
+    field->value.v_utf8.len = strlen(fieldValue);
+
+    char* s1 = "SELECT * FROM ";
     char* s2 = ".";
-    char* s3 = " WHERE id = ";
-    char* sql = malloc(strlen(s1) + strlen(database) + strlen(s2) + strlen(collection) + strlen(s3) + 1);
+    char* sql = malloc(strlen(s1) + strlen(database) + strlen(s2) + strlen(collection) + 1);
     strcpy(sql, s1);
     strcat(sql, database);
     strcat(sql, s2);
     strcat(sql, collection);
-    strcat(sql, s3);
-    strcat(sql, id);
-    printf("%s\n", sql);
 
     sqlite3_stmt* findStmt;
     int rc;
 
     rc = sqlite3_prepare_v2(db, sql, -1, &findStmt, NULL);
-    sqlite3_bind_text(findStmt, 1, id, strlen(id), 0);
-
-    int count = -1;
-
-    while((rc = sqlite3_step(findStmt)) == SQLITE_ROW) {
-        count = sqlite3_column_int(findStmt, 0);
+    if (rc != SQLITE_OK) {
+        fprintf(stderr, "Cannot prepare count statement: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        free(sql);
+        return 1;
     }
 
-    printf("after count rc=%d\n", rc);
-    printf("after count count=%d\n", count);
+    int count = 0;
+
+    while ((rc = sqlite3_step(findStmt)) == SQLITE_ROW) {
+        // Get the BSON blob
+        // Pass it into match; if it matches, increase count
+        const uint8_t* document = sqlite3_column_blob(findStmt, 1);
+
+        if (match(document, fieldName, field, sqlite3_column_bytes(findStmt, 1))) {
+            count++;
+        }
+    }
+
+    if (rc != SQLITE_DONE) {
+        fprintf(stderr, "Cannot perform count: %s\n", sqlite3_errmsg(db));
+        sqlite3_close(db);
+        free(sql);
+        return 1;
+    }
 
     return count;
 }
 
-char** mongoc_collection_find(int* count, char* database, char* collection, char* id) {
-    
-    *count = mongoc_collection_count(database, collection, id);
-    char** res = malloc((*count) * sizeof(char*));
 
-    // TODO change from just looking for id to looking for field/indexing
+char** mongoc_collection_find(
+    int* count, char* database, char* collection, char* fieldName, char* fieldValue) {
+    bson_value_t* field = bson_malloc(sizeof(bson_value_t));
+    field->value_type = BSON_TYPE_UTF8;
+    field->value.v_utf8.str = fieldValue;
+    field->value.v_utf8.len = strlen(fieldValue);
+
+    *count = mongoc_collection_count(database, collection, fieldName, fieldValue);
+    char** res = malloc((*count) * sizeof(char*));
 
     char* s1 = "SELECT * FROM ";
     char* s2 = ".";
-    char* s3 = " WHERE id = ";
-    char* sql = malloc(strlen(s1) + strlen(database) + strlen(s2) + strlen(collection) + strlen(s3) + 1);
+    char* sql = malloc(strlen(s1) + strlen(database) + strlen(s2) + strlen(collection) + 1);
     strcpy(sql, s1);
     strcat(sql, database);
     strcat(sql, s2);
     strcat(sql, collection);
-    strcat(sql, s3);
-    strcat(sql, id);
-    printf("%s\n", sql);
 
     sqlite3_stmt* findStmt;
     int rc;
 
     rc = sqlite3_prepare_v2(db, sql, -1, &findStmt, NULL);
-    sqlite3_bind_text(findStmt, 1, id, strlen(id), 0);
 
     int i = 0;
-    while((rc = sqlite3_step(findStmt)) == SQLITE_ROW) {
-        char* data = sqlite3_column_text(findStmt, 1);
-        res[i] = malloc(strlen(data) * sizeof(char));
-        strcpy(res[i], data);
-        printf("inserted %s\n", res[i]);
-        i++;
+    while ((rc = sqlite3_step(findStmt)) == SQLITE_ROW) {
+        const uint8_t* document = sqlite3_column_blob(findStmt, 1);
+        if (match(document, fieldName, field, sqlite3_column_bytes(findStmt, 1))) {
+            printf("found a match\n");
+            bson_t* b;
+            size_t len;
+            b = bson_new_from_data(document, sqlite3_column_bytes(findStmt, 1));
+            char* data = bson_as_json(b, &len);
+            res[i] = malloc(strlen(data) * sizeof(char));
+            strcpy(res[i], data);
+            i++;
+        }
     }
-
-    printf("after find rc = %d\n", rc);
-
     return res;
-
-}
-
-char *index_create(char* collection, char* key, char* err_msg) {
-    char index_table_name[500];
-    sprintf(index_table_name, "index_%s_%s", collection, key);
-    char collection_table_name[500];
-    sprintf(collection_table_name, "collection_%s", collection);
-    char sql[500]; // TODO: make this safe from buffer overflow
-    sprintf(sql, "CREATE TABLE %s(index BLOB PRIMARY KEY, id ROWID);", index_table_name);
-    // TODO: import indexed values into table
-    sprintf(sql + strlen(sql), "INSERT INTO %s (id) SELECT rowid FROM %s;", collection_table_name, index_table_name);
-    sprintf(sql + strlen(sql), "INSERT INTO %s (id) SELECT (rowid, document) FROM %s;", collection_table_name, index_table_name);
-    sql_execute(sql);
-}
-
-void index_drop(char* index_table_name) {
-    char sql[500]; // TODO: make this safe from buffer overflow
-    sprintf(sql, "DROP TABLE %s;", index_table_name);
-    sql_execute(sql);
 }
 
 /* execute some sql that doesn't require a callback */
 int sql_execute(char* sql) {
-    char *err_msg = 0;
+    char* err_msg = 0;
     int rc;
     if (db == NULL) {
         init();
@@ -364,4 +408,30 @@ int sql_execute(char* sql) {
         return rc;
     }
     return 0;
+}
+
+char* index_create(char* collection, char* key, char* err_msg) {
+    char index_table_name[500];
+    sprintf(index_table_name, "index_%s_%s", collection, key);
+    char collection_table_name[500];
+    sprintf(collection_table_name, "collection_%s", collection);
+    char sql[500];  // TODO: make this safe from buffer overflow
+    sprintf(sql, "CREATE TABLE %s(index BLOB PRIMARY KEY, id ROWID);", index_table_name);
+    // TODO: import indexed values into table
+    sprintf(sql + strlen(sql),
+            "INSERT INTO %s (id) SELECT rowid FROM %s;",
+            collection_table_name,
+            index_table_name);
+    sprintf(sql + strlen(sql),
+            "INSERT INTO %s (id) SELECT (rowid, document) FROM %s;",
+            collection_table_name,
+            index_table_name);
+    sql_execute(sql);
+    return NULL;
+}
+
+void index_drop(char* index_table_name) {
+    char sql[500];  // TODO: make this safe from buffer overflow
+    sprintf(sql, "DROP TABLE %s;", index_table_name);
+    sql_execute(sql);
 }
