@@ -212,6 +212,10 @@ int detachDatabase(sqlite3* db, char* database) {
 }
 
 
+void mongoc_collection_dropAll(char* database) {
+
+    dropTables(db, database);
+}
 void mongoc_database_create_collection(char* database, char* name) {
     // Assume that the database connection is already open
 
@@ -381,7 +385,6 @@ char** mongoc_collection_find(
     while ((rc = sqlite3_step(findStmt)) == SQLITE_ROW) {
         const uint8_t* document = sqlite3_column_blob(findStmt, 1);
         if (match(document, fieldName, field, sqlite3_column_bytes(findStmt, 1))) {
-            printf("found a match\n");
             bson_t* b;
             size_t len;
             b = bson_new_from_data(document, sqlite3_column_bytes(findStmt, 1));
