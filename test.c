@@ -4,10 +4,26 @@
 #include <stdlib.h>
 
 #include "mingo.h"
-
+#include "aggregate.h"
 
 int main(void) {
     
+    int rc = demoScript();
+    printf("%d\n",rc);
+}
+
+int demoScript() {
+    
+    init();
+
+    printf("Creating new database 'testDB', with collection 'skunkworks'\n");
+    mongoc_database_create_collection("testDB", "skunkworks");	
+
+    return 0;
+
+}
+
+int testScript() {
     init();
 
     mongoc_database_create_collection("db","coll");
