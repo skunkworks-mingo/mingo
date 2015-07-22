@@ -96,7 +96,7 @@ const char * const agg_operators[] = { "$sum" };
 
 bool _aggregate_is_agg_operator(const char *key) {
     size_t index = 0;
-    size_t agg_operator_count = sizeof(agg_operators) / sizeof(char);
+    size_t agg_operator_count = 1;
 
     for(index = 0; index < agg_operator_count; index++) {
         if (strncmp(key, agg_operators[index], strlen(key)) == 0) {
@@ -127,7 +127,7 @@ bson_value_t* _aggregate(bson_value_t *value1, bson_value_t *value2, const char 
 void _aggregate_recurse_fill(bson_iter_t *iter, bson_t* new_doc, bson_t* existing_aggregate_doc, bson_t* merged_aggregate_doc, const char *key) {
     bson_iter_t child_iter;
     bson_t child_doc;
-    
+
     while (bson_iter_next (iter)) {
         int new_key_length = strlen(bson_iter_key(iter));
         if (strcmp("", key) != 0) {
@@ -226,7 +226,7 @@ void aggregate_group(aggregation_state_t *state, char *document_json) {
         if (aggregate_doc == NULL) {
             bson_t *doc = bson_new();
             bson_append_value(doc, "_id", -1, id_value);
-            aggregate_doc = doc;       
+            aggregate_doc = doc;
             aggregate_doc_index = new_docs_len;
             new_docs[new_docs_len++] = aggregate_doc;
         }
