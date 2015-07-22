@@ -4,9 +4,11 @@
 
 aggregation_state_t* aggregate_start(char *database, char *collection)
 {
-    aggregation_state_t state = {database, collection, NULL, 0};
     aggregation_state_t *ret_state  = bson_malloc(sizeof(aggregation_state_t));
-    memcpy(ret_state, &state, sizeof(aggregation_state_t));
+    (*ret_state).database = database;
+    (*ret_state).collection = collection;
+    (*ret_state).docs = NULL;
+    (*ret_state).docs_len = 0;
     return ret_state;
 }
 
@@ -30,14 +32,16 @@ aggregation_result_t* aggregate_end(aggregation_state_t *state)
 
 void aggregate_match(aggregation_state_t *state, char* query) {
     //TODO: Run a find on the database/collection with that query.
-
     bson_t *doc1 = BCON_NEW("zip", BCON_UTF8("10001"), "state", BCON_UTF8("NY"), "population", BCON_INT64(5));
     bson_t *doc2 = BCON_NEW("zip", BCON_UTF8("10002"), "state", BCON_UTF8("NY"), "population", BCON_INT64(5));
     bson_t *doc3 = BCON_NEW("zip", BCON_UTF8("08520"), "state", BCON_UTF8("NJ"), "population", BCON_INT64(5));
 
-    bson_t docs[3] = {*doc1, *doc2, *doc3};
+    bson_t *result_docs = malloc(3 * sizeof(bson_t));
+    result_docs[0] = *doc1;
+    result_docs[1] = *doc2;
+    result_docs[2] = *doc3;
 
-    (*state).docs = docs;
+    (*state).docs = result_docs;
     (*state).docs_len = 3;
 }
 
@@ -264,13 +268,23 @@ int
 main (int   argc,
       char *argv[])
 {
+    size_t index;
+
     aggregation_state_t *state = aggregate_start(NULL, NULL);
     aggregate_match(state, "{}");
+    printf("Match:\n");
+    for(index = 0; index < (*state).docs_len; index++) {
+        char *str;
+        str = bson_as_json (&(*state).docs[index], NULL);
+        printf("%s\n", str);
+    }
+
+    printf("Group:\n");
+    printf("{\"_id\" : \"$state\", \"data\" : {\"views\" : 0, \"total_population\" : {\"$sum\" : \"$population\"} } }\n");
     aggregate_group(state, "{\"_id\" : \"$state\", \"data\" : {\"views\" : 0, \"total_population\" : {\"$sum\" : \"$population\"} } }");
     aggregation_result_t *result = aggregate_end(state);
 
     printf("Result:\n");
-    size_t index;
     for(index = 0; index < (*result).docs_len; index++) {
         printf("%s\n", (*result).docs[index]);
     }
