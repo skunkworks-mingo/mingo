@@ -8,7 +8,9 @@ void mongoc_database_drop (char* database);
 
 void mongoc_collection_insert(char* database, char* collection, char* document);
 
-int mongoc_collection_count(char* database, char* collection, char* id);
+int mongoc_collection_count(char* database, char* collection, char* fieldName, char* fieldValue);
+
+char** mongoc_collection_find(int* count, char* database, char* collection, char* fieldName, char* fieldValue);
 
 char *index_create(char* collection, char* key, char* err_msg);
 

@@ -13,13 +13,14 @@ int main(void) {
     mongoc_database_create_collection("db","coll");
     
     mongoc_collection_insert("db", "coll", "{ \"a\": \"b\"}");
-    mongoc_collection_insert("db", "coll", "{ \"a\": \"c\"}");
-    mongoc_collection_insert("db", "coll", "{ \"a\": \"d\"}");
+    mongoc_collection_insert("db", "coll", "{ \"a\": \"b\"}");
+    mongoc_collection_insert("db", "coll", "{ \"a\": \"cc\"}");
+    mongoc_collection_insert("db", "coll", "{ \"a\": \"ddd\"}");
 
-    mongoc_collection_count("db", "coll", "0");
+    mongoc_collection_count("db", "coll", "a", "b");
 
     int* count;
-    char** res = mongoc_collection_find(count, "db", "coll", "0");
+    char** res = mongoc_collection_find(count, "db", "coll", "a", "b");
     printf("count is %d\n", (*count));
     for (int i = 0; i < (*count); i++) {
         printf("%s\n", res[i]);
